@@ -1,0 +1,1207 @@
+;======
+;MSX ROM Mapper Identification Tool ver 0.00
+;======
+
+	.z80
+	cseg
+
+;======
+
+BDOS	equ	0005h
+ENASLT	equ	0024h
+DMA	equ	0080h
+
+page1_adr	equ	4000h
+page2_adr	equ	8000h
+page3_adr	equ	0c000h
+
+RAMAD1	equ	0f342h
+RAMAD2	equ	0f343h
+
+;マッパー番号定義
+;0	マッパーなし(通常ROM)
+;1	GENERIC 8K
+;2	GENERIC 16K
+;3	ASCII 8K
+;4	ASCII 16K
+;5	KONAMI
+;6	SCC
+;7	SOUND Cartridge
+;8	PAC/FMPAC
+;9	MSX-AUDIO
+;10	CROSS BLAIM
+;11	HALNOTE
+;12	似非RAM 8K
+;13	似非RAM 16K
+;14	はぁりぃふぉっくす雪の魔王編
+;15	スーパーロードランナー
+;======
+
+MAP_NML		equ	0
+MAP_GEN8	equ	1
+MAP_GEN16	equ	2
+MAP_ASC8	equ	3
+MAP_ASC16	equ	4
+MAP_KNM		equ	5
+MAP_SCC		equ	6
+MAP_SND		equ	7
+MAP_PAC		equ	8
+MAP_AUD		equ	9
+MAP_CRS		equ	10
+MAP_HAL		equ	11
+MAP_ESE8	equ	12
+MAP_ESE16	equ	13
+MAP_HFY		equ	14
+MAP_SLR		equ	15
+
+;======
+
+;メモリ書き換え可否判定マクロ
+;ent:
+;	HL=対象アドレス
+;ret:
+;	Z=1で書き換え可
+;brk:
+;	AF
+;======
+writable_check	macro
+	ld	a,(hl)			;;(HL)読み出し
+	cpl				;;ビット反転して同アドレスに書き込み
+	ld	(hl),a
+	cp	(hl)			;;書き込んだ値と比較
+	cpl				;;再度反転した値(＝元の値)を書き込んで復帰
+	ld	(hl),a
+	endm				;Z=1で書き換え可
+
+;======
+
+mes_version:
+	db	'MegaROM Identification v0.00',13,10
+	db	'Copyright 2026 GORIPONSOFT',26,13,10,'$'
+
+START::
+	ld	sp,(BDOS+1)		;スタック初期化
+	ld	hl,exit_command
+	push	hl
+
+;バージョンの表示
+;======
+
+	ld	de,mes_version
+	ld	c,9
+	call	BDOS
+
+;コマンドライン解析(スロット番号指定の解釈)
+;======
+
+	;業の末端に0を書き込んでASCIIZ文字列化
+	ld	hl,DMA
+	ld	a,(hl)
+	or	a
+	jp	z,disp_help
+	inc	hl
+	add	a,l
+	ld	e,a
+	ld	d,h
+	xor	a
+	ld	(de),a
+
+	;先行スペースのスキップ
+skip_space:
+	ld	a,(hl)
+	inc	hl
+	cp	' '+1
+	jr	c,skip_space
+
+	;10進/16進スロット指定で分岐
+	cp	'#'			;先頭が'#'かどうか
+	jr	nz,hex_slot_number	;'#'でなければ16進スロット指定へ
+
+	;10進スロット指定の読み取り
+	ld	a,(hl)			;数字→数値変換
+	inc	hl
+	sub	'0'			;'0'未満は弾く
+	jp	c,disp_help
+	cp	4			;0～3以外は弾く
+	jp	nc,disp_help
+	ld	e,a
+	ld	a,(hl)			;続く文字が空白か終端なら基本スロット確定
+	cp	' '+1
+	jr	c,confirm_slot_number
+	inc	hl			;(条件ジャンプ先で(hl)を参照するのでinc hlは分岐後)
+	cp	'-'			;続く文字が'-'(ハイフン)の場合はスキップ
+	jr	nz,not_hyphen
+	ld	a,(hl)
+	inc	hl
+not_hyphen:
+	sub	'0'			;数字→数値変換
+	jp	c,disp_help
+	cp	4
+	jp	nc,disp_help
+	rlca				;拡張スロットアドレス生成
+	rlca
+	or	80h
+	or	e
+	ld	e,a
+	jr	confirm_slot_number
+
+	;16進スロット指定の読み取り
+hex_slot_number:
+	sub	'0'			;数字→数値変換
+	jp	c,disp_help
+	cp	8			;8(80h～8Fhの1文字目)なら拡張スロット指定
+	jr	z,hex_secondary
+	cp	4			;0～3＝基本スロット指定でなければ弾く
+	jp	nc,disp_help
+	ld	e,a			;基本スロットで確定
+	jr	confirm_slot_number
+hex_secondary:
+	ld	a,(hl)			;文字→数値変換
+	inc	hl
+	sub	'0'			;'0'未満は弾く
+	jp	c,disp_help
+	cp	10			;10未満なら16進0h～9hとして処理
+	jr	c,numeric_hex_value
+	cp	'a'-'0'			;英小字なら英大字変換
+	jr	c,uppercase_hex_value
+	sub	'a'-'A'
+uppercase_hex_value:
+	sub	'A'-'0'			;'A'未満(16進数でない)なら弾く
+	jp	c,disp_help
+	cp	6			;6以上(16進数でない)なら弾く
+	jp	nc,disp_help
+	add	a,10			;16進Ah～Fhとして処理
+numeric_hex_value:
+	or	80h			;拡張スロットアドレス生成
+	ld	e,a
+confirm_slot_number:
+	ld	(target_slot_number),de	;スロットアドレス確定
+	ld	a,(hl)			;続く文字が空白か終端でなければ弾く
+	cp	' '+1
+	jp	nc,disp_help
+
+;対象スロットの確認と表示
+;======
+
+	ld	a,(target_slot_number)	;スロットアドレスがFFhなら未指定なので弾く
+	cp	-1
+	jp	z,disp_help
+
+	ld	de,mes_target_slot	;”Target Slot: #"
+	ld	c,9
+	call	BDOS
+	ld	a,(target_slot_number)	;基本スロット表示
+	and	3
+	call	print_nibble
+	ld	a,(target_slot_number)
+	bit	7,a			;スロットアドレスのbit7が1＝拡張スロットなら続けて拡張スロット表示
+	jr	z,target_primary
+	ld	e,'-'
+	ld	c,2
+	call	BDOS
+	ld	a,(target_slot_number)
+	rrca
+	rrca
+	and	3
+	call	print_nibble
+target_primary:
+	ld	de,mes_crlf
+	ld	c,9
+	call	BDOS
+
+;メガROMマッパー判定本体をPAGE3に転送し、ページ1～2を対象スロットに切り替えて、マッパー判定を実行
+;======
+
+	ld	hl,identify_code
+	ld	de,page3_adr
+	ld	bc,identify_code_tail-identify_code
+	ldir
+
+	;ページ1～2を対象スロットに切り替え
+	ld	a,(target_slot_number)
+	ld	h,high page1_adr
+	call	ENASLT
+	ld	a,(target_slot_number)
+	ld	h,high page2_adr
+	call	ENASLT
+	di
+
+	;すべてのバンクをセグメント#0で初期化
+	xor	a
+	ld	(6000h),a		;ASCII 8K/ASCII 16K
+	ld	(6800h),a
+	ld	(7000h),a
+	ld	(7800h),a
+	ld	(5FFEh),a		;PAC/FMPAC
+	;ld	(5FFFh),a
+	ld	(4000h),a		;KONAMI/GENERIC
+	;ld	(6000h),a
+	ld	(8000h),a
+	ld	(0A000h),a
+	ld	(0BFFEh),a		;SOUND Cartridge
+
+	;マッパー判定呼び出し
+	call	page3_adr
+
+	push	af
+	push	bc
+
+	;すべてのバンクをセグメント#0で初期化
+	xor	a			;ASCII 8K/ASCII 16K
+	ld	(6000h),a
+	ld	(6800h),a
+	ld	(7000h),a
+	ld	(7800h),a
+	ld	(5FFEh),a		;PAC/FMPAC
+	;ld	(5FFFh),a
+	ld	(4000h),a		;KONAMI/GENERIC
+	;ld	(6000h),a
+	ld	(8000h),a
+	ld	(0A000h),a
+	ld	(0BFFEh),a		;SOUND Cartridge
+	inc	a			;似非RAMディスクの場合の暴走防止
+	ld	(6800h),a
+
+	;ページ1～2をメインRAMスロットに切り替え
+	ld	a,(RAMAD1)
+	ld	h,high page1_adr
+	call	ENASLT
+	ld	a,(RAMAD2)
+	ld	h,high page2_adr
+	call	ENASLT
+	ei
+
+	pop	bc
+	pop	af
+
+;結果表示
+;======
+
+	push	bc
+	push	af
+
+	;マッパー番号表示
+	ld	de,mes_map_number	;"Mapper Number: "
+	ld	c,9
+	call	BDOS
+	pop	af
+	push	af
+	ld	l,a
+	ld	h,0
+	call	print_word_dec
+	ld	de,mes_crlf
+	ld	c,9
+	call	BDOS
+
+	;マッパー名称表示
+	pop	af
+	push	af
+	ld	l,a			;マッパー名称アドレス取り出し
+	ld	h,0
+	add	hl,hl
+	ld	de,mes_tab_mapper
+	add	hl,de
+	ld	e,(hl)
+	inc	hl
+	ld	d,(hl)
+	ld	c,9
+	call	BDOS
+	pop	af
+	pop	bc
+
+	;カートリッジ個別処理
+	cp	MAP_SND			;サウンドカートリッジならRAM容量表示
+	jr	z,disp_soundcart
+
+	inc	b			;Bが0＝バックアップRAMなしなら終了
+	dec	b
+	ret	z
+
+	cp	MAP_KNM			;KONAMI非SCCでなければ通常のバックアップRAM表示
+	jr	nz,disp_backupram
+
+	;新10倍カートリッジ用バックアップRAM表示
+disp_shin10bai:
+	push	bc
+	ld	de,mes_shin10bai
+	ld	c,9
+	call	BDOS
+	pop	bc
+	;(falldown)
+
+	;バックアップRAM容量&開始セグメント表示
+disp_backupram:
+	push	bc
+	ld	de,mes_br_size_top	;"BackupRAM size: "
+	ld	c,9
+	call	BDOS
+	pop	bc
+	push	bc
+	ld	l,b			;セグメント数を10進表示
+	ld	h,0
+	call	print_word_dec
+	ld	de,mes_br_size_tail
+	ld	c,9
+	call	BDOS
+	pop	bc
+	inc	c			;開始セグメントが#0の場合は開始セグメント非表示
+	dec	c
+	ret	z
+	ld	de,mes_br_segment	;"BackupRAM start: #"
+	ld	c,9
+	call	print_word_dec
+	ret
+
+	;サウンドカートリッジ専用RAM容量&開始セグメント表示
+disp_soundcart:
+	push	bc
+	ld	de,mes_sc_size_top	;"RAM size: "
+	ld	c,9
+	call	BDOS
+	pop	bc
+	push	bc
+	ld	l,b
+	ld	h,0
+	call	print_word_dec
+	ld	de,mes_sc_size_tail	;"segment(s)"
+	ld	c,9
+	call	BDOS
+	ld	de,mes_sc_segment	;"RAM start: #"
+	ld	c,9
+	call	BDOS
+	pop	hl
+	ld	h,0
+	call	print_word_dec
+	ret
+
+;ヘルプを表示してコマンド終了
+;======
+
+disp_help:
+	ld	de,mes_help
+	ld	c,9
+	jp	BDOS
+
+;改行を表示してコマンド終了
+;======
+
+exit_command:
+	ld	de,mes_crlf
+	ld	c,9
+	jp	BDOS
+
+;16進数値1桁表示
+;ent:
+;	A: 表示する値
+;brk:
+;	ALL
+;======
+
+print_nibble:
+	and	0fh
+	cp	10
+	jr	c,pn_decimal
+	add	a,'A'-'0'-10
+pn_decimal:
+	add	a,'0'
+	ld	e,a
+	ld	c,2
+	call	BDOS
+	ret
+
+;10進数値表示
+;ent:
+;	HL: 表示する値
+;brk:
+;	ALL
+;======
+
+print_word_dec:
+	ld	a,h			;数値が0か？
+	or	l
+	jr	z,ph_prt_l_digit	;0の場合には何も表示されないので1桁の0を表示して終わる
+
+	call	hl_to_bcd		;HLの数値を変換しB,C,Dレジスタに6桁BCDを得る
+
+	;変換後のBCDを上位ビット側に詰めて最下位ニブルはFhで埋める
+ph_loop_by_sft:
+	ld	a,b			;最上位バイトが0か？
+	or	a
+	jr	nz,ph_end_by_sft
+	ld	b,c			;0なら1バイト上位側にずらす
+	ld	c,d
+	ld	d,0ffh			;空いた最下位バイトにはFFhを詰める
+	jr	ph_loop_by_sft
+ph_end_by_sft:
+	ld	a,b			;最上位バイトの上位4ビットが0か？
+	and	0f0h
+	jr	nz,ph_skip_nibble_sh	;0でなければそのまま次へ
+	ld	e,4			;4ビット上位側にずらす
+ph_loop_nibble_sh:
+	scf				;空いた最下位ビットには1を詰める
+	rl	d
+	rl	c
+	rl	b
+	dec	e
+	jr	nz,ph_loop_nibble_sh
+ph_skip_nibble_sh:
+	;最上位バイトから最下位バイトに向けて1桁ずつ表示(Fhになる桁は非表示)
+	ld	a,b
+	call	ph_prt_h_digit
+	ld	a,b
+	call	ph_prt_l_digit
+	ld	a,c
+	call	ph_prt_h_digit
+	ld	a,c
+	call	ph_prt_l_digit
+	ld	a,d
+	call	ph_prt_h_digit
+	ld	a,d
+	jr	ph_prt_l_digit
+
+	;Aレジスタの上位4ビットを1桁BCD表示
+ph_prt_h_digit:
+	rrca
+	rrca
+	rrca
+	rrca
+	;(falldown)
+
+	;Aレジスタの下位4ビットを1桁BCD表示
+ph_prt_l_digit:
+	and	0fh
+	cp	10			;(0～9でなければ表示しない)
+	ret	nc
+	add	a,'0'
+	push	bc
+	push	de
+	ld	e,a
+	ld	c,2
+	call	BDOS
+	pop	de
+	pop	bc
+	ret
+
+;数値をBCDに変換
+;ent:
+;	HL: 変換元数値
+;ret:
+;	BCD: 変換したBCD数値5桁(6桁目=Bの上位4ビットは常に0)
+;brk:
+;	AF,BC,DE,IX
+;======
+
+hl_to_bcd:
+	push	hl
+	ld	bc,0
+	ld	de,0*256+16		;D=0,E=16
+	ld	ix,htb_tbl_addvalue
+
+	;HLの各ビットごとの重み(BitNの場合は2のN乗)をBCDで加算
+htb_loop:
+	srl	h		;右シフト&HL最下位ビット取り出し
+	rr	l
+	jr	nc,htb_skip	;0なら加算しない
+	ld	a,(ix+0)	;DAA命令を使いBCDで加算
+	add	a,d
+	daa
+	ld	d,a
+	ld	a,(ix+1)
+	adc	a,c
+	daa
+	ld	c,a
+	ld	a,(ix+2)
+	adc	a,b
+	daa
+	ld	b,a
+htb_skip:
+	inc	ix		;次のビットへ
+	inc	ix
+	inc	ix
+	dec	e		;繰り返し
+	jr	nz,htb_loop
+
+	pop	hl
+	ret
+
+htb_tbl_addvalue:			;BCD変換用テーブル
+	dw	0001h	;BCD 1
+	db	00h
+	dw	0002h	;BCD 2
+	db	00h
+	dw	0004h	;BCD 4
+	db	00h
+	dw	0008h	;BCD 8
+	db	00h
+	dw	0016h	;BCD 16
+	db	00h
+	dw	0032h	;BCD 32
+	db	00h
+	dw	0064h	;BCD 64
+	db	00h
+	dw	0128h	;BCD 128
+	db	00h
+	dw	0256h	;BCD 256
+	db	00h
+	dw	0512h	;BCD 512
+	db	00h
+	dw	1024h	;BCD 1024
+	db	00h
+	dw	2048h	;BCD 2048
+	db	00h
+	dw	4096h	;BCD 4096
+	db	00h
+	dw	8192h	;BCD 8192
+	db	00h
+	dw	6384h	;BCD 16384
+	db	01h
+	dw	2768h	;BCD 32768
+	db	03h
+
+;======
+
+mes_help:
+	db	13,10
+	db	'IDENTIFY <target slot>',13,10
+	db	'  xx: hexadecimal adr(x:0-F)',13,10
+	db	'  #n-n: decimal adr(n:0-3)'
+mes_crlf:
+	db	13,10
+;mes_dummy:
+	db	'$'
+
+mes_target_slot:
+	db	13,10,'Target slot: #$'
+
+mes_map_number:
+	db	13,10,'Mapper Number: $'
+
+mes_sc_size_top:
+	db	13,10,13,10,'RAM size: $'
+mes_sc_size_tail:
+	db	'segment(s)$'
+mes_sc_segment:
+	db	13,10,'RAM start seg.: #$'
+
+mes_shin10bai:
+	db	13,10,' with GameMaster2 BackupRAM$'
+
+mes_br_size_top:
+	db	13,10,13,10,'BackupRAM size: $'
+mes_br_size_tail:
+	db	'segment(s)$'
+mes_br_segment:
+	db	13,10,'BackupRAM start seg.: #$'
+
+mes_tab_mapper:
+	dw	mes_mapname_0
+	dw	mes_mapname_1
+	dw	mes_mapname_2
+	dw	mes_mapname_3
+	dw	mes_mapname_4
+	dw	mes_mapname_5
+	dw	mes_mapname_6
+	dw	mes_mapname_7
+	dw	mes_mapname_8
+	dw	mes_mapname_9
+	dw	mes_mapname_10
+	dw	mes_mapname_11
+	dw	mes_mapname_12
+	dw	mes_mapname_13
+	dw	mes_mapname_14
+	dw	mes_mapname_15
+
+mes_mapname_0:
+	db	'No Mapper(Normal ROM)$'
+mes_mapname_1:
+	db	'Generic 8K$'
+mes_mapname_2:
+	db	'Generic 16K$'
+mes_mapname_3:
+	db	'ASCII 8K$'
+mes_mapname_4:
+	db	'ASCII 16K$'
+mes_mapname_5:
+	db	'KONAMI without SCC$'
+mes_mapname_6:
+	db	'KONAMI with SCC$'
+mes_mapname_7:
+	db	'KONAMI SOUND Cartridge$'
+mes_mapname_8:
+	db	'PAC/FM-PAC$'
+mes_mapname_9:
+	db	'MSX-AUDIO$'
+mes_mapname_10:
+	db	'Cross Blaim$'
+mes_mapname_11:
+	db	'HALNOTE$'
+mes_mapname_12:
+	db	'ESE-RAM 8K$'
+mes_mapname_13:
+	db	'ESE-RAM 16K$'
+mes_mapname_14:
+	db	'HarryFox Yuki no Maou Hen$'
+mes_mapname_15:
+	db	'Super Lode Runner$'
+
+target_slot_number:
+	dw	-1
+
+
+
+;判定ルーチン本体
+;ent:
+;	ページ0～1を対象スロットに切り替え
+;	割り込み禁止
+;ret:
+;	A=マッパータイプ番号
+;	B=RAM容量(セグメント単位)・0で非搭載
+;	C=開始セグメント番号・RAM非搭載(B=0)の場合は無効
+;======
+
+identify_code:
+	.phase	page3_adr
+
+;KONAMI with SCC判定(ブランク判定可能)
+;9000h-97FFhへの0書き込み後に9800-987FhがRAMでない
+;続けて9000h-97FFhへのFFh(xx111111b)書き込み後に9800-987FhがRAMである
+;======
+	ld	hl,9000h		;9000hに0書き込み
+	ld	(hl),l			;(L=0)
+
+	;9800hの書き換え可否確認
+	ld	h,98h			;HL=9800h
+	writable_check
+	jr	z,non_scc		;この時点で書き換え可は非KONAMI with SCC
+
+	ld	h,90h			;9000hにFFh(xx111111b)書き込み
+	ld	(hl),0FFh
+
+	;9800hの書き換え可否確認
+	ld	h,98h			;HL=9800h
+	writable_check
+	jr	nz,non_scc		;書き換え不可で非KONAMI with SCC
+
+;SOUND Cartridge判定
+;BFFEh-BFFFhに0・B000h-B7FFhにFFh(1xxxxxxxxb)書き込み後にB800h-B89FhがRAMでない
+;続けてBFFEh-BFFFhに20h(xx1xxxxxb)書き込み後にB800h-B89FhがRAMである
+;======
+	ld	h,0B0h			;B000hにFFh書き込み
+	ld	(hl),0FFh
+
+	;B800hの書き換え可否確認
+	ld	h,0B8h			;HL=B800h
+	writable_check
+	jr	z,non_soundcart		;この時点で書き換え可は非サウンドカートリッジ
+
+	ld	a,20h			;BFFEhに20h書き込み
+	ld	(0BFFEh),a
+
+	;B800hの書き換え可否確認
+	writable_check
+	jr	nz,non_soundcart	;書き換え不可で非サウンドカートリッジ
+
+;サウンドカートリッジRAM容量&開始セグメント判定
+;スナッチャー(前半64KB)/SDスナッチャー(後半64KB)
+;======
+	ld	hl,5000h		;5000hに8書き込み＝4000h-5FFFhにセグメント#8
+	ld	(hl),8
+	ld	h,70h			;7000hに0書き込み＝6000h-7FFFhにセグメント#0
+	ld	(hl),l			;(L=0)
+	ld	a,00010011b		;BFFEHに13h書き込み＝4000h-5FFFhおよび6000h-7FFFhのRAM書き込み許可
+	ld	(0BFFEh),a
+	ld	b,l			;B=RAMセグメント数(0)
+	ld	c,l			;C=開始バンク#(0)
+
+	;後半RAM判定
+	ld	h,40h			;HL=4000h
+	writable_check
+	jr	nz,non_sdsnacher	;書き換え不可で非SDスナッチャー
+
+	;後半RAM存在確定
+	ld	a,8			;B=RAMセグメント数(+8)
+	add	a,b
+	ld	b,a
+	ld	c,8			;C=RAM開始セグメント#(8)上書き
+non_sdsnacher:
+
+	;前半RAM判定
+	ld	h,60h			;HL=6000h
+	writable_check
+	jr	nz,non_snacher		;書き換え不可で非スナッチャー
+
+	;前半RAM存在確定
+	ld	a,8			;B=RAMセグメント数(+8)
+	add	a,b
+	ld	b,a
+	ld	c,0			;C=RAM開始セグメント#(0)上書き
+non_snacher:
+
+	;サウンドカートリッジRAM容量確定
+	xor	a			;BFFEhに0書き込み＝RAM書き込み不可・互換モード設定
+	ld	(0BFFEh),a
+	ld	a,MAP_SND		;サウンドカートリッジ
+	ret
+
+non_soundcart:
+
+	;KONAMI with SCC(非サウンドカートリッジ)確定
+	ld	a,MAP_SCC		;SCCカートリッジ
+	ld	bc,0			;RAMなし
+	ret
+
+;非KONAMI with SCC
+non_scc:
+
+;クロスブレイム判定
+;8800h-8FFFhへの書き込みでA000h-BFFFhが切り替わる
+;======
+
+	;8000h-BFFFhの切替可否確認
+	ld	de,88A0h		;D=88h,E=A0h
+	ld	hl,8800h		;8800hに0書き込み
+	ld	(hl),l			;(L=0)
+	ld	h,e			;A000h読み出し
+	ld	a,(hl)
+	ld	h,d			;8800hに2書き込み(セグメント#1は#0に振り替えられるため#2を使用)
+	ld	(hl),2
+	ld	h,e
+	cp	(hl)			;読み出していた値とA000hを比較
+	jr	z,non_crossblaim	;一致＝切り替わりなしで非クロスブレイム
+
+	;クロスブレイム確定
+	ld	a,MAP_CRS		;クロスブレイム
+	ld	bc,0			;バックアップRAMなし
+	ret
+
+non_crossblaim:
+
+;GENERIC 8K/GENERIC 16K判定
+;4000h-47FFhへの書き込みで4000h-5FFFhが切り替わる
+;======
+
+	;4000h-5FFFhの切替可否確認
+	ld	hl,4000h		;4000hに0書き込み
+	ld	(hl),l			;(L=0)
+	ld	a,(hl)			;4000h読み出し
+	ld	(hl),1			;4000hに1書き込み
+	cp	(hl)			;読み出していた値と4000hを比較
+	jr	nz,cnf_generic		;不一致＝切り替わりありでGENERIC
+	ld	(hl),0FFh		;4000hにFFh書き込み
+	cp	(hl)			;読み出していた値と4000hを比較
+	jr	z,non_generic		;一致＝切り替わりなしで非GENERIC
+					;(値の偶然の一致を避けるため#0対#1,#0対#255の2度比較)
+cnf_generic:
+
+;GENERIC 16Kバンク判定
+;4000h-47FFhへの書き込みで6000h-7FFFhが切り替わる
+;======
+
+	;6000h-7FFFhの切替可否確認
+	ld	de,4060h		;D=40h,E=60h
+	ld	hl,4000h		;4000hに0書き込み
+	ld	(hl),l
+	ld	h,e			;6000h読み出し
+	ld	a,(hl)
+	ld	h,d			;4000hに1書き込み
+	ld	(hl),1
+	ld	h,e			;読み出していた値と6000hを比較
+	cp	(hl)
+	jr	nz,cnf_generic16k	;不一致＝切り替わりありで16Kバンク
+	ld	h,d			;4000hにFFh書き込み
+	ld	(hl),0FFh
+	ld	h,e			;読み出していた値と6000hを比較
+	cp	(hl)
+	jr	nz,cnf_generic8k	;一致＝切り替わりなしで8Kバンク
+					;(値の偶然の一致を避けるため#0対#1,#0対#255の2度比較)
+cnf_generic16k:
+	ld	a,MAP_GEN16		;GENERIC16K
+	ld	bc,0			;バックアップRAMなし
+	ret
+
+cnf_generic8k:
+	ld	a,MAP_GEN8		;GENERIC8K
+	ld	bc,0			;バックアップRAMなし
+	ret
+
+non_generic:
+
+;KONAMI without SCC判定
+;8800h-8FFFhへの書き込みで8000h-9FFFhが切り替わった
+;======
+
+	ld	de,8880h		;D=88h,E=80h
+
+	ld	hl,8800h		;8800hに0書き込み
+	ld	(hl),l
+	ld	h,e			;8000h読み出し
+	ld	a,(hl)
+	ld	h,d			;8800hに1書き込み
+	ld	(hl),1
+	ld	h,e			;読み出していた値と8000hを比較
+	cp	(hl)
+	jr	nz,cnf_konami		;切り替わりありでコナミ
+	ld	h,d			;8800hにFFh書き込み
+	ld	(hl),0FFh
+	ld	h,e			;読み出していた値と8000hを比較
+	cp	(hl)
+	jr	z,non_konami		;切り替わりなしで非コナミ
+					;(値の偶然の一致を避けるため#0対#1,#0対#255の2度比較)
+cnf_konami:
+
+;新10倍カートリッジ判定
+;A000h-AFFFhに0Fh書き込みでB000h-BFFFhがRAMでない
+;and A000h-AFFFhに1Fh書き込みでB000h-BFFFhがRAMになった
+;======
+
+	ld	de,0A0B0h		;D=A0h,E=B0h
+
+	;B000hの書き換え可否確認
+	ld	hl,0A000h		;A000hに0Fh書き込み
+	ld	(hl),0Fh
+	ld	h,e			;B000h
+	writable_check
+	jr	z,non_shin10bai		;この時点で書き換え可は非新10倍カートリッジ
+
+	ld	h,d			;A000hに1Fh書き込み
+	ld	(hl),1Fh
+
+	;B000hの書き換え可否確認
+	ld	h,e			;B000h
+	writable_check
+	jr	nz,non_shin10bai	;書き換え不可は非新10倍カートリッジ
+
+	ld	h,d			;A000hに0書き込み＝バックアップRAM使用終了
+	ld	(hl),0
+
+	ld	a,MAP_KNM		;KONAMI/wo SCC
+	ld	bc,2*256+0		;B=バックアップRAMセグメント数(2),C=開始バンク#(0)
+	ret
+
+non_shin10bai:
+	ld	a,MAP_KNM		;KONAMI/wo SCC
+	ld	bc,0			;バックアップRAMなし
+	ret
+
+non_konami:
+
+;ASCII 8K/ASCII 16K/はぁりぃふぉっくす雪の魔王編/R-TYPE/HRA-MEGA判定
+;7000h-77FFhへの書き込みで8000h-9FFFhが切り替わる
+;======
+
+	ld	de,7080h		;D=70h,E=80h
+
+	ld	hl,7000h		;7000hに0書き込み
+	ld	(hl),l
+	ld	h,e			;8000h読み出し
+	ld	a,(hl)
+	ld	h,d			;7000hに1書き込み
+	ld	(hl),1
+	ld	h,e			;読み出していた値と8000hを比較
+	cp	(hl)
+	jr	nz,cnf_ascii		;不一致＝切り替わりありでASCII
+	ld	h,d			;7000hにFFh書き込み
+	ld	(hl),0FFh
+	ld	h,e			;読み出していた値と8000hを比較
+	cp	(hl)
+	jr	z,non_ascii		;一致＝切り替わりなしで非ASCII
+					;(値の偶然の一致を避けるため#0対#1,#0対#255の2度比較)
+cnf_ascii:
+
+;ASCII 8K判定
+;7000h-77FFhへの書き込みでA000h-BFFFhが切り替わらない
+;======
+
+	ld	de,70A0h		;D=70h,E=A0h
+
+	ld	hl,7000h		;7000hに0書き込み
+	ld	(hl),l
+	ld	h,e			;A000h読み出し
+	ld	a,(hl)
+	ld	h,d			;7000hに1書き込み
+	ld	(hl),1
+	ld	h,e			;読み出していた値とA000hを比較
+	cp	(hl)
+	jr	nz,non_ascii8k		;不一致＝切り替わりありで非ASCII 8K
+	ld	h,d
+	ld	(hl),0FFh		;7000hにFFh書き込み
+	ld	h,e			;読み出していた値とA000hを比較
+	cp	(hl)
+	jr	nz,non_ascii8k		;不一致＝切り替わりありで非ASCII 8K
+					;(値の偶然の一致を避けるため#0対#1,#0対#255の2度比較)
+
+	call	srch_asc_backup		;バックアップRAM判定
+	ld	a,MAP_ASC8		;ASCII 8K
+	add	a,e			;似非RAMフラグ(MAP_ASC8とMAP_ESE8の差)を加算
+	ret
+
+non_ascii8k:
+
+;はぁりぃふぉっくす雪の魔王編判定
+;6800h-6FFFhへの書き込みで4000h-5FFFhが切り替わった
+;======
+
+	ld	de,6840h		;D=68h,E=40h
+
+	ld	hl,6800h		;6800hに0書き込み
+	ld	(hl),l
+	ld	h,e			;4000h読み出し
+	ld	a,(hl)
+	ld	h,d			;6800hに1書き込み
+	ld	(hl),1
+	ld	h,e			;読み出していた値と4000hを比較
+	cp	(hl)
+	jr	nz,cnf_harryfox		;不一致＝切り替わりありではぁりぃふぉっくす
+	ld	h,d			;6800hにFFh書き込み
+	ld	(hl),0FFh
+	ld	h,e			;読み出していた値と4000hを比較
+	cp	(hl)
+	jr	z,cnf_ascii16k		;一致＝切り替わりなしでASCII 16K
+					;(値の偶然の一致を避けるため#0対#1,#0対#255の2度比較)
+cnf_harryfox:
+	ld	a,MAP_HFY		;はぁりぃふぉっくす雪の魔王編
+	ld	bc,0			;バックアップRAMなし
+	ret
+
+cnf_ascii16k:
+	call	srch_asc_backup		;バックアップRAM判定
+	ld	a,MAP_ASC16		;ASCII 16K(含R-TYPE/HRA-MEGA)
+	add	a,e			;似非RAMフラグ(MAP_ASC8とMAP_ESE8の差)を加算
+	ret
+
+non_ascii:
+
+;スーパーロードランナー判定
+;0000h-3FFFhへの書き込みで8000h-BFFFhが切り替わった
+;======
+
+	ld	de,0082h		;D=00h,E=82h
+
+	ld	hl,0000h		;0000hに0書き込み
+	ld	(hl),l
+	ld	h,e			;8200h読み出し(8000hだと切替後も同一値になってしまうため8200h)
+	ld	a,(hl)
+	ld	h,d			;0000hに1書き込み
+	ld	(hl),1
+	ld	h,e			;読み出していた値と8200hを比較
+	cp	(hl)
+	ld	h,d			;0000hのJP命令を書き戻す
+	ld	(hl),0C3h
+	jr	nz,cnf_sploderunner	;不一致＝切り替わりありでスーパーロードランナー
+	ld	h,d			;0000hにFFh書き込み
+	ld	(hl),0FFh
+	ld	h,e			;読み出していた値と8200hを比較
+	cp	(hl)
+	ld	h,d			;0000hのJP命令を書き戻す
+	ld	(hl),0C3h
+	jr	z,non_sploderunner	;一致＝切り替わりなしで非スーパーロードランナー
+
+cnf_sploderunner:
+	ld	a,MAP_SLR		;スーパーロードランナー
+	ld	bc,0			;バックアップRAMなし
+	ret
+
+non_sploderunner:
+
+;PAC/FMPAC判定
+;5FFEh-5FFFhに0,0を書き込みで4000h-5FFDhがRAMでない
+;and 5FFEh-5FFFhに4Dh,69h書き込みで4000h-5FFDhがRAMになった
+;(さらにこの後7FF7hでROMバンクが切り替わることをチェックすればFMPAC確定できる)
+;======
+
+
+	ld	hl,0			;5FFEh-5FFFHhに0,0書き込み
+	ld	(5FFEh),hl		;(L=0)
+
+	;4000hの書き換え可否確認
+	ld	hl,40h			;HL=4000h
+	writable_check
+	jr	z,non_pac		;この時点で書き換え可は非PAC
+
+	ld	de,694Dh		;5FFEh-5FFFhに4Dh,69h書き込み
+	ld	(5FFEh),de
+
+	;4000hの書き換え可否確認
+	writable_check
+	jr	nz,non_pac		;書き換え不可は非PAC
+
+	ld	bc,1*256+0		;B=バックアップRAMセグメント数(1),C=RAM開始セグメント#(0)
+
+;存在しない容量増加版PAC判定(笑)
+;6000h-BFFFhの24KBにバックアップRAMがあるかチェックする
+;======
+
+	;6000hの書き換え可否確認
+	ld	h,60h			;6000h読み出し
+	writable_check
+	jr	nz,cnf_pac		;書き換え不可は非バックアップRAM
+	inc	b			;B=バックアップRAMセグメント数(+1)
+
+	;8000hの書き換え可否確認
+	ld	h,80h			;8000h読み出し
+	writable_check
+	jr	nz,cnf_pac		;書き換え不可は非バックアップRAM
+	inc	b			;B=バックアップRAMセグメント数(+1)
+
+	;A000hの書き換え可否確認
+	ld	h,0A0h			;A000h読み出し
+	writable_check
+	jr	nz,cnf_pac		;書き換え不可は非バックアップRAM
+	inc	b			;B=バックアップRAMセグメント数(+1)
+
+cnf_pac:
+	ld	de,0			;5FFEh-5FFFhに0,0書き込み(バックアップRAM使用終了)
+	ld	(5FFEh),de
+
+	ld	a,MAP_PAC		;PAC/FMPAC
+	ret
+
+non_pac:
+
+;判定不可＝非メガROMの標準ROM扱い
+;======
+
+	xor	a			;標準ROM
+	ld	bc,0			;バックアップRAMなし
+	ret
+
+;ASCII 8K/ASCII 16K兼用バックアップRAM検索
+;======
+
+srch_asc_backup:
+	ld	de,7080h		;D=70h,E=80h
+	ld	hl,7000h
+	ld	c,4			;セグメント番号
+find_rambk_loop1:
+	ld	h,d			;7000hにセグメント番号書き込み
+	ld	(hl),c
+
+	;8000hの書き換え可否確認
+	ld	h,e			;HL=8000h
+	writable_check
+	jr	z,cnf_ram_segment	;書き換え可はバックアップRAMセグメント
+
+	sla	c			;セグメント番号を2倍
+	jr	nz,find_rambk_loop1	;セグメント番号が0になって(オーバーフローして)いなければ繰り返し
+
+	;2のn乗で始まるバンクにバックアップRAMがなかったので総当たりその1
+	;#6から順に偶数番号
+	ld	c,6
+find_rambk_loop2:
+	ld	h,d			;7000hにセグメント番号書き込み
+	ld	(hl),c
+
+	;8000hの書き換え可否確認
+	ld	h,e			;8000h読み出し
+	writable_check
+	jr	z,cnf_ram_segment	;書き換え可はバックアップRAMバンク
+
+	inc	c			;セグメント番号を+2
+	inc	c
+	jr	nz,find_rambk_loop2	;セグメント番号が0になって(オーバーフローして)いなければ繰り返し
+
+	;2のn乗で始まるバンクにバックアップRAMがなかったので総当たりその2
+	;#7から順に奇数番号
+	ld	c,7
+find_rambk_loop3:
+	ld	h,d			;7000hにセグメント番号書き込み
+	ld	(hl),c
+
+	;8000hの書き換え可否確認
+	ld	h,e			;8000h読み出し
+	writable_check
+	jr	z,cnf_ram_segment	;書き換え可はバックアップRAMバンク
+
+	inc	c			;セグメント番号を+2
+	jr	z,non_ram_segment	;セグメント番号が0になって(オーバーフローして)いれば終了
+	inc	c
+	jr	find_rambk_loop3	;繰り返し
+
+non_ram_segment:
+	;バックアップRAM未発見
+	ld	bc,0
+	ld	e,0			;Eを0＝非ESERAMに
+	ret
+
+cnf_ram_segment:
+
+	ld	b,c			;B=バックアップRAM開始セグメント番号+1
+	inc	b
+	ld	h,78h			;7800hに0書き込み＝バンクA000h-BFFFhにセグメント#0
+	ld	(hl),l
+count_rambk_loop:
+	ld	h,d			;7000hにセグメント番号書き込み
+	ld	(hl),b
+	;8000hの書き換え可否確認
+	ld	h,e			;HL=8000h
+	writable_check
+	jr	nz,cnf_ram_count	;書き換え不可ならカウント終了
+
+	ld	a,(hl)			;チェック対象と#0の先頭バイトが不一致なら非ゴーストセグメント
+	ld	h,0A0h
+	cp	(hl)
+	jr	nz,non_ghost
+	cpl				;反転した値をA000hに書き込んで
+	ld	(hl),a
+	ld	h,80h			;書き込んだ値と8000hを比較
+	cp	(hl)
+	cpl				;再度反転した値(＝元の値)をA000hに書き込んで復帰
+	ld	h,0A0h
+	ld	(hl),a
+	jr	nz,cnf_ram_count	;書き込んだ後でも一致ならゴーストセグメント
+non_ghost:
+
+	inc	b			;次のセグメントへ
+	jr	count_rambk_loop
+
+cnf_ram_count:
+	ld	h,0
+	ld	l,b
+	ld	b,h
+	ld	a,l
+	or	a
+	jr	nz,ramcnt_notovfllow	;B!=0ならセグメント255を超えていない
+	inc	h			;HL=256
+ramcnt_notovfllow:
+	xor	a
+	ld	(7000h),a
+	or	a
+	sbc	hl,bc
+	ld	b,l
+
+;似非RAM判定
+;セグメント#0と#128の内容が同一でセグメント#128の書き換えがセグメント#0に反映される
+;======
+
+	ld	hl,7000h		;7000hに0書き込み＝バンク8000h-9FFFhにセグメント#0
+	ld	(hl),l
+	ld	h,78h			;7800hに128書き込み＝バンクA000h-BFFFhにセグメント#128
+	ld	(hl),128
+
+	ld	h,80h			;#0と#128の先頭バイトが不一致なら非ESERAM
+	ld	a,(hl)
+	ld	h,0A0h
+	cp	(hl)
+	jr	nz,non_eseram
+	cpl				;反転した値をA000hに書き込んで
+	ld	(hl),a
+	ld	h,80h			;書き込んだ値と8000hを比較
+	cp	(hl)
+	cpl				;再度反転した値(＝元の値)をA000hに書き込んで復帰
+	ld	h,0A0h
+	ld	(hl),a
+	jr	nz,non_eseram		;書込み後に不一致なら非ESERAM
+
+	ld	e,MAP_ESE8-MAP_ASC8	;E=似非RAMフラグ(非0で似非RAM) ※実態はMAP_ASC8とMAP_ESE8の差
+	ret
+
+non_eseram:
+	ld	e,0			;E=似非RAMフラグ(0でNOT似非RAM)
+	ret
+
+	.dephase
+identify_code_tail:
+
+
+
+	end
