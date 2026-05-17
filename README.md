@@ -51,12 +51,12 @@ X(旧Twitter): @goriponsoft
 PACに容量判定が付いてるのはちょっとした提案です。誰か作ったりしません？
 <br>コナミの新10倍カートリッジもセグメント番号に使えるビットが余っているので32KBまでは拡張可能ですね。
 
-[判定フロー・メイン](flow_main.mmd)
+[判定フロー・メイン](flow_main.md)
 
-[判定フロー・アスキー](flow_asc.mmd)
+[判定フロー・アスキー](flow_asc.md)
 
-[判定フロー・コナミSCCなし](flow_knm.mmd)
+[判定フロー・コナミSCCなし](flow_knm.md)
 
-[判定フロー・コナミSCCあり](flow_scc.mmd)
+[判定フロー・コナミSCCあり](flow_scc.md)
 
-[判定フロー・PAC](flow_pac.mmd)
+[判定フロー・PAC](flow_pac.md)
