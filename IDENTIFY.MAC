@@ -380,7 +380,8 @@ disp_soundcart:
 disp_help:
 	ld	de,mes_help
 	ld	c,9
-	jp	BDOS
+	call	BDOS
+	rst	00h
 
 ;改行を表示してコマンド終了
 ;======
@@ -388,7 +389,8 @@ disp_help:
 exit_command:
 	ld	de,mes_crlf
 	ld	c,9
-	jp	BDOS
+	call	BDOS
+	rst	00h
 
 ;16進数値1桁表示
 ;ent:
@@ -777,43 +779,45 @@ non_scc:
 non_crossblaim:
 
 ;GENERIC 8K/GENERIC 16K判定
-;4000h-47FFhへの書き込みで4000h-5FFFhが切り替わる
+;8000hへの書き込みで8000h-9FFFhが切り替わる
+;(8000h限定なのは韓国製ソフト「SUPER獣王記」を含めるため)
 ;======
 
-	;4000h-5FFFhの切替可否確認
-	ld	hl,4000h		;4000hに0書き込み
+	;8000h-9FFFhの切替可否確認
+	ld	hl,8000h		;8000hに0書き込み
 	ld	(hl),l			;(L=0)
-	ld	a,(hl)			;4000h読み出し
-	ld	(hl),1			;4000hに1書き込み
-	cp	(hl)			;読み出していた値と4000hを比較
+	ld	a,(hl)			;8000h読み出し
+	ld	(hl),1			;8000hに1書き込み
+	cp	(hl)			;読み出していた値と8000hを比較
 	jr	nz,cnf_generic		;不一致＝切り替わりありでGENERIC
-	ld	(hl),0FFh		;4000hにFFh書き込み
-	cp	(hl)			;読み出していた値と4000hを比較
+	ld	(hl),0FFh		;8000hにFFh書き込み
+	cp	(hl)			;読み出していた値と8000hを比較
 	jr	z,non_generic		;一致＝切り替わりなしで非GENERIC
 					;(値の偶然の一致を避けるため#0対#1,#0対#255の2度比較)
 cnf_generic:
 
 ;GENERIC 16Kバンク判定
-;4000h-47FFhへの書き込みで6000h-7FFFhが切り替わる
+;8000hへの書き込みでA000h-BFFFhが切り替わる
+;(8000h限定なのは韓国製ソフト「SUPER獣王記」を含めるため)
 ;======
 
-	;6000h-7FFFhの切替可否確認
-	ld	de,4060h		;D=40h,E=60h
-	ld	hl,4000h		;4000hに0書き込み
+	;A000h-BFFFhの切替可否確認
+	ld	de,80B0h		;D=80h,E=B0h
+	ld	hl,8000h		;8000hに0書き込み
 	ld	(hl),l
-	ld	h,e			;6000h読み出し
+	ld	h,e			;B000h読み出し(B000hなのは以下略)
 	ld	a,(hl)
-	ld	h,d			;4000hに1書き込み
-	ld	(hl),1
-	ld	h,e			;読み出していた値と6000hを比較
+	ld	h,d			;8000hに2書き込み(2なのは以下略)
+	ld	(hl),2
+	ld	h,e			;読み出していた値とB000hを比較
 	cp	(hl)
 	jr	nz,cnf_generic16k	;不一致＝切り替わりありで16Kバンク
-	ld	h,d			;4000hにFFh書き込み
+	ld	h,d			;8000hにFFh書き込み
 	ld	(hl),0FFh
-	ld	h,e			;読み出していた値と6000hを比較
+	ld	h,e			;読み出していた値とB000hを比較
 	cp	(hl)
 	jr	nz,cnf_generic8k	;一致＝切り替わりなしで8Kバンク
-					;(値の偶然の一致を避けるため#0対#1,#0対#255の2度比較)
+					;(値の偶然の一致を避けるため#0対#2,#0対#255の2度比較)
 cnf_generic16k:
 	ld	a,MAP_GEN16		;GENERIC16K
 	ld	bc,0			;バックアップRAMなし
