@@ -28,15 +28,14 @@ RAMAD2	equ	0f343h
 ;6	SCC
 ;7	SOUND Cartridge
 ;8	PAC/FMPAC
-;9	MSX-AUDIO
+;9	(MSX-AUDIO)	※未実装
 ;10	CROSS BLAIM
-;11	HALNOTE
+;11	(HALNOTE)	※未実装
 ;12	似非RAM 8K
 ;13	似非RAM 16K
 ;14	はぁりぃふぉっくす雪の魔王編
 ;15	スーパーロードランナー
 ;======
-
 MAP_NML		equ	0
 MAP_GEN8	equ	1
 MAP_GEN16	equ	2
@@ -53,8 +52,6 @@ MAP_ESE8	equ	12
 MAP_ESE16	equ	13
 MAP_HFY		equ	14
 MAP_SLR		equ	15
-
-;======
 
 ;メモリ書き換え可否判定マクロ
 ;ent:
@@ -73,12 +70,14 @@ writable_check	macro
 	ld	(hl),a
 	endm				;Z=1で書き換え可
 
+;バージョン文字列
 ;======
-
 mes_version:
 	db	'MegaROM Identification v0.00',13,10
 	db	'Copyright 2026 GORIPONSOFT',26,13,10,'$'
 
+;起動エントリ
+;======
 START::
 	ld	sp,(BDOS+1)		;スタック初期化
 	ld	hl,exit_command
@@ -340,15 +339,19 @@ disp_backupram:
 	ld	l,b			;セグメント数を10進表示
 	ld	h,0
 	call	print_word_dec
-	ld	de,mes_br_size_tail
+	ld	de,mes_size_tail	;"segment(s)"
 	ld	c,9
 	call	BDOS
 	pop	bc
 	inc	c			;開始セグメントが#0の場合は開始セグメント非表示
 	dec	c
 	ret	z
+	push	bc
 	ld	de,mes_br_segment	;"BackupRAM start: #"
 	ld	c,9
+	call	BDOS
+	pop	hl
+	ld	h,0
 	call	print_word_dec
 	ret
 
@@ -363,7 +366,7 @@ disp_soundcart:
 	ld	l,b
 	ld	h,0
 	call	print_word_dec
-	ld	de,mes_sc_size_tail	;"segment(s)"
+	ld	de,mes_size_tail	;"segment(s)"
 	ld	c,9
 	call	BDOS
 	ld	de,mes_sc_segment	;"RAM start: #"
@@ -580,8 +583,6 @@ mes_map_number:
 
 mes_sc_size_top:
 	db	13,10,13,10,'RAM size: $'
-mes_sc_size_tail:
-	db	'segment(s)$'
 mes_sc_segment:
 	db	13,10,'RAM start seg.: #$'
 
@@ -590,10 +591,12 @@ mes_shin10bai:
 
 mes_br_size_top:
 	db	13,10,13,10,'BackupRAM size: $'
-mes_br_size_tail:
-	db	'segment(s)$'
+
 mes_br_segment:
 	db	13,10,'BackupRAM start seg.: #$'
+
+mes_size_tail:
+	db	'segment(s)$'
 
 mes_tab_mapper:
 	dw	mes_mapname_0
@@ -668,6 +671,7 @@ identify_code:
 ;9000h-97FFhへの0書き込み後に9800-987FhがRAMでない
 ;続けて9000h-97FFhへのFFh(xx111111b)書き込み後に9800-987FhがRAMである
 ;======
+
 	ld	hl,9000h		;9000hに0書き込み
 	ld	(hl),l			;(L=0)
 
@@ -700,12 +704,14 @@ identify_code:
 	ld	(0BFFEh),a
 
 	;B800hの書き換え可否確認
+	;ld	h,0B8h			;HL=B800h
 	writable_check
 	jr	nz,non_soundcart	;書き換え不可で非サウンドカートリッジ
 
 ;サウンドカートリッジRAM容量&開始セグメント判定
 ;スナッチャー(前半64KB)/SDスナッチャー(後半64KB)
 ;======
+
 	ld	hl,5000h		;5000hに8書き込み＝4000h-5FFFhにセグメント#8
 	ld	(hl),8
 	ld	h,70h			;7000hに0書き込み＝6000h-7FFFhにセグメント#0
@@ -737,6 +743,7 @@ non_sdsnacher:
 	add	a,b
 	ld	b,a
 	ld	c,0			;C=RAM開始セグメント#(0)上書き
+
 non_snacher:
 
 	;サウンドカートリッジRAM容量確定
@@ -754,20 +761,21 @@ non_soundcart:
 
 ;非KONAMI with SCC
 non_scc:
+	ld	h,90h			;9000hに0書き込み
+	ld	(hl),l
 
 ;クロスブレイム判定
-;8800h-8FFFhへの書き込みでA000h-BFFFhが切り替わる
+;8800h-8FFFhへの書き込みでA000h-BFFFh(正確には前述の範囲を含む8000h～BFFFh)が切り替わる
 ;======
 
 	;8000h-BFFFhの切替可否確認
-	ld	de,88A0h		;D=88h,E=A0h
 	ld	hl,8800h		;8800hに0書き込み
 	ld	(hl),l			;(L=0)
-	ld	h,e			;A000h読み出し
+	ld	h,0A0h			;A000h読み出し
 	ld	a,(hl)
-	ld	h,d			;8800hに2書き込み(セグメント#1は#0に振り替えられるため#2を使用)
+	ld	h,88h			;8800hに2書き込み(セグメント#1は#0に振り替えられるため#2を使用)
 	ld	(hl),2
-	ld	h,e
+	ld	h,0A0h
 	cp	(hl)			;読み出していた値とA000hを比較
 	jr	z,non_crossblaim	;一致＝切り替わりなしで非クロスブレイム
 
@@ -778,161 +786,206 @@ non_scc:
 
 non_crossblaim:
 
-;GENERIC 8K/GENERIC 16K判定
-;8000hへの書き込みで8000h-9FFFhが切り替わる
-;(8000h限定なのは韓国製ソフト「SUPER獣王記」を含めるため)
+;GENERIC 8K/GENERIC 16K/KONAMI判定
+;8000hへの書き込みで8000h-9FFFh(16Kの場合は前述の範囲を含む8000h-BFFFh)が切り替わる
+;※8000h限定なのは韓国製ソフト「SUPER獣王記」をGENERIC 16Kに含めるため
 ;======
 
 	;8000h-9FFFhの切替可否確認
 	ld	hl,8000h		;8000hに0書き込み
 	ld	(hl),l			;(L=0)
-	ld	a,(hl)			;8000h読み出し
-	ld	(hl),1			;8000hに1書き込み
-	cp	(hl)			;読み出していた値と8000hを比較
+	call	calc_hash		;8000h-9FFFhのハッシュ値を取得
+	ld	(base_hash),de		;ハッシュ値を保存
+	ld	(hl),2			;8000hに2書き込み
+	call	calc_hash		;8000h-9FFFhのハッシュ値を取得
+	ld	bc,(base_hash)		;保存していた値と新たに取得した値を比較
+	ex	de,hl
+	or	a
+	sbc	hl,bc
+	ex	de,hl
 	jr	nz,cnf_generic		;不一致＝切り替わりありでGENERIC
 	ld	(hl),0FFh		;8000hにFFh書き込み
-	cp	(hl)			;読み出していた値と8000hを比較
-	jr	z,non_generic		;一致＝切り替わりなしで非GENERIC
-					;(値の偶然の一致を避けるため#0対#1,#0対#255の2度比較)
+	call	calc_hash		;8000h-9FFFhのハッシュ値を取得
+	ld	bc,(base_hash)		;保存していた値と新たに取得した値を比較
+	ex	de,hl
+	or	a
+	sbc	hl,bc
+	ex	de,hl
+	jp	z,non_generic		;一致＝切り替わりなしで非GENERIC
+					;(値の偶然の一致を避けるため#0対#2,#0対#255の2度比較)
 cnf_generic:
 
-;GENERIC 16Kバンク判定
-;8000hへの書き込みでA000h-BFFFhが切り替わる
-;(8000h限定なのは韓国製ソフト「SUPER獣王記」を含めるため)
+;8Kバンク判定
+;8000hへの書き込みでA000h-BFFFh(正確には前述の範囲を含む8000h-BFFFh)が切り替わらない
 ;======
 
 	;A000h-BFFFhの切替可否確認
-	ld	de,80B0h		;D=80h,E=B0h
 	ld	hl,8000h		;8000hに0書き込み
-	ld	(hl),l
-	ld	h,e			;B000h読み出し(B000hなのは以下略)
-	ld	a,(hl)
-	ld	h,d			;8000hに2書き込み(2なのは以下略)
+	ld	(hl),l			;(L=0)
+	ld	h,0A0h			;A000h-BFFFhのハッシュ値を取得
+	call	calc_hash
+	ld	(base_hash),de		;ハッシュ値を保存
+	ld	h,80h			;8000hに2書き込み
 	ld	(hl),2
-	ld	h,e			;読み出していた値とB000hを比較
-	cp	(hl)
+	ld	h,0A0h			;A000h-BFFFhのハッシュ値を取得
+	call	calc_hash
+	ld	bc,(base_hash)		;保存していた値と新たに取得した値を比較
+	ex	de,hl
+	or	a
+	sbc	hl,bc
+	ex	de,hl
 	jr	nz,cnf_generic16k	;不一致＝切り替わりありで16Kバンク
-	ld	h,d			;8000hにFFh書き込み
+	ld	h,80h			;8000hにFFh書き込み
 	ld	(hl),0FFh
-	ld	h,e			;読み出していた値とB000hを比較
-	cp	(hl)
-	jr	nz,cnf_generic8k	;一致＝切り替わりなしで8Kバンク
+	ld	h,0A0h			;A000h-BFFFhのハッシュ値を取得
+	call	calc_hash
+	ld	bc,(base_hash)		;保存していた値と新たに取得した値を比較
+	ex	de,hl
+	or	a
+	sbc	hl,bc
+	ex	de,hl
+	jr	nz,cnf_generic16k	;不一致＝切り替わりありで16Kバンク
 					;(値の偶然の一致を避けるため#0対#2,#0対#255の2度比較)
+
+;non_generic16k:
+
+;KONAMI判定
+;8800h-8FFFhへの書き込みで8000h-9FFFhが切り替わる
+;======
+
+	ld	hl,8800h		;8800hに0書き込み
+	ld	(hl),l
+	ld	h,80h			;8000h-9FFFhのハッシュ値を取得
+	call	calc_hash
+	ld	(base_hash),de		;ハッシュ値を保存
+	ld	h,88h			;8800hに2書き込み
+	ld	(hl),2
+	ld	h,80h			;8000h-9FFFhのハッシュ値を取得
+	call	calc_hash
+	ld	bc,(base_hash)		;保存していた値と新たに取得した値を比較
+	ex	de,hl
+	or	a
+	sbc	hl,bc
+	ex	de,hl
+	jr	z,non_konami		;一致＝切り替わりなしで非コナミ
+	ld	h,88h			;8800hにFFh書き込み
+	ld	(hl),0FFh
+	ld	h,80h			;8000h-9FFFhのハッシュ値を取得
+	call	calc_hash
+	ld	bc,(base_hash)		;保存していた値と新たに取得した値を比較
+	ex	de,hl
+	or	a
+	sbc	hl,bc
+	ex	de,hl
+	jr	z,non_konami		;一致＝切り替わりなしで非コナミ
+					;(値の偶然の一致を避けるため#0対#2,#0対#255の2度比較)
+
+;新10倍カートリッジ判定
+;A000h-AFFFhに0Fh書き込みでB000h-BFFFhがRAMでない
+;続けてA000h-AFFFhに1Fh書き込みでB000h-BFFFhがRAMである
+;======
+
+	;B000hの書き換え可否確認
+	ld	hl,0A000h		;A000hに0Fh書き込み
+	ld	(hl),0Fh
+	ld	h,0B0h			;B000h
+	writable_check
+	jr	z,non_generic		;この時点で書き換え可は新10倍カートリッジでもKONAMIでもない
+
+	ld	h,0A0h			;A000hに1Fh書き込み
+	ld	(hl),1Fh
+
+	;B000hの書き換え可否確認
+	ld	h,0B0h			;B000h
+	writable_check
+	jr	nz,non_shin10bai	;書き換え不可は非新10倍カートリッジ
+
+	ld	h,0A0h			;A000hに0書き込み＝バックアップRAM使用終了
+	ld	(hl),0
+
+	ld	a,MAP_KNM		;KONAMI
+	ld	bc,2*256+0		;B=バックアップRAMセグメント数(2),C=開始バンク#(0)
+	ret
+
 cnf_generic16k:
-	ld	a,MAP_GEN16		;GENERIC16K
+	ld	a,MAP_GEN16		;GENERIC 16K
 	ld	bc,0			;バックアップRAMなし
 	ret
 
-cnf_generic8k:
-	ld	a,MAP_GEN8		;GENERIC8K
+non_konami:
+	ld	a,MAP_GEN8		;GENERIC 8K
+	ld	bc,0			;バックアップRAMなし
+	ret
+
+non_shin10bai:
+	ld	a,MAP_KNM		;KONAMI
 	ld	bc,0			;バックアップRAMなし
 	ret
 
 non_generic:
 
-;KONAMI without SCC判定
-;8800h-8FFFhへの書き込みで8000h-9FFFhが切り替わった
-;======
-
-	ld	de,8880h		;D=88h,E=80h
-
-	ld	hl,8800h		;8800hに0書き込み
-	ld	(hl),l
-	ld	h,e			;8000h読み出し
-	ld	a,(hl)
-	ld	h,d			;8800hに1書き込み
-	ld	(hl),1
-	ld	h,e			;読み出していた値と8000hを比較
-	cp	(hl)
-	jr	nz,cnf_konami		;切り替わりありでコナミ
-	ld	h,d			;8800hにFFh書き込み
-	ld	(hl),0FFh
-	ld	h,e			;読み出していた値と8000hを比較
-	cp	(hl)
-	jr	z,non_konami		;切り替わりなしで非コナミ
-					;(値の偶然の一致を避けるため#0対#1,#0対#255の2度比較)
-cnf_konami:
-
-;新10倍カートリッジ判定
-;A000h-AFFFhに0Fh書き込みでB000h-BFFFhがRAMでない
-;and A000h-AFFFhに1Fh書き込みでB000h-BFFFhがRAMになった
-;======
-
-	ld	de,0A0B0h		;D=A0h,E=B0h
-
-	;B000hの書き換え可否確認
-	ld	hl,0A000h		;A000hに0Fh書き込み
-	ld	(hl),0Fh
-	ld	h,e			;B000h
-	writable_check
-	jr	z,non_shin10bai		;この時点で書き換え可は非新10倍カートリッジ
-
-	ld	h,d			;A000hに1Fh書き込み
-	ld	(hl),1Fh
-
-	;B000hの書き換え可否確認
-	ld	h,e			;B000h
-	writable_check
-	jr	nz,non_shin10bai	;書き換え不可は非新10倍カートリッジ
-
-	ld	h,d			;A000hに0書き込み＝バックアップRAM使用終了
-	ld	(hl),0
-
-	ld	a,MAP_KNM		;KONAMI/wo SCC
-	ld	bc,2*256+0		;B=バックアップRAMセグメント数(2),C=開始バンク#(0)
-	ret
-
-non_shin10bai:
-	ld	a,MAP_KNM		;KONAMI/wo SCC
-	ld	bc,0			;バックアップRAMなし
-	ret
-
-non_konami:
-
 ;ASCII 8K/ASCII 16K/はぁりぃふぉっくす雪の魔王編/R-TYPE/HRA-MEGA判定
-;7000h-77FFhへの書き込みで8000h-9FFFhが切り替わる
+;7000h-77FFhへの書き込みで8000h-9FFFh(16Kの場合は前述の範囲を含む8000h-BFFFh)が切り替わる
 ;======
-
-	ld	de,7080h		;D=70h,E=80h
 
 	ld	hl,7000h		;7000hに0書き込み
-	ld	(hl),l
-	ld	h,e			;8000h読み出し
-	ld	a,(hl)
-	ld	h,d			;7000hに1書き込み
-	ld	(hl),1
-	ld	h,e			;読み出していた値と8000hを比較
-	cp	(hl)
+	ld	(hl),l			;(L=0)
+	ld	h,80h			;8000h-9FFFhのハッシュ値を取得
+	call	calc_hash
+	ld	(base_hash),de		;ハッシュ値を保存
+	ld	h,70h			;7000hに2書き込み
+	ld	(hl),2
+	ld	h,80h			;8000h-9FFFhのハッシュ値を取得
+	call	calc_hash
+	ld	bc,(base_hash)		;保存していた値と新たに取得した値を比較
+	ex	de,hl
+	or	a
+	sbc	hl,bc
+	ex	de,hl
 	jr	nz,cnf_ascii		;不一致＝切り替わりありでASCII
-	ld	h,d			;7000hにFFh書き込み
+	ld	h,70h			;7000hにFFh書き込み
 	ld	(hl),0FFh
-	ld	h,e			;読み出していた値と8000hを比較
-	cp	(hl)
+	ld	h,80h			;8000h-9FFFhのハッシュ値を取得
+	call	calc_hash
+	ld	bc,(base_hash)		;保存していた値と新たに取得した値を比較
+	ex	de,hl
+	or	a
+	sbc	hl,bc
+	ex	de,hl
 	jr	z,non_ascii		;一致＝切り替わりなしで非ASCII
-					;(値の偶然の一致を避けるため#0対#1,#0対#255の2度比較)
+					;(値の偶然の一致を避けるため#0対#2,#0対#255の2度比較)
 cnf_ascii:
 
-;ASCII 8K判定
+;8Kバンク判定
 ;7000h-77FFhへの書き込みでA000h-BFFFhが切り替わらない
 ;======
 
-	ld	de,70A0h		;D=70h,E=A0h
-
 	ld	hl,7000h		;7000hに0書き込み
 	ld	(hl),l
-	ld	h,e			;A000h読み出し
-	ld	a,(hl)
-	ld	h,d			;7000hに1書き込み
-	ld	(hl),1
-	ld	h,e			;読み出していた値とA000hを比較
-	cp	(hl)
-	jr	nz,non_ascii8k		;不一致＝切り替わりありで非ASCII 8K
-	ld	h,d
-	ld	(hl),0FFh		;7000hにFFh書き込み
-	ld	h,e			;読み出していた値とA000hを比較
-	cp	(hl)
-	jr	nz,non_ascii8k		;不一致＝切り替わりありで非ASCII 8K
-					;(値の偶然の一致を避けるため#0対#1,#0対#255の2度比較)
+	ld	h,0A0h			;A000h-BFFFhのハッシュ値を取得
+	call	calc_hash
+	ld	(base_hash),de		;ハッシュ値を保存
+	ld	h,70h			;7000hに2書き込み
+	ld	(hl),2
+	ld	h,0A0h			;A000h-BFFFhのハッシュ値を取得
+	call	calc_hash
+	ld	bc,(base_hash)		;保存していた値と新たに取得した値を比較
+	ex	de,hl
+	or	a
+	sbc	hl,bc
+	ex	de,hl
+	jr	nz,non_ascii8k		;不一致＝切り替わりありで非8Kバンク
+	ld	h,70h			;7000hにFFh書き込み
+	ld	(hl),0FFh
+	ld	h,0A0h			;A000h-BFFFhのハッシュ値を取得
+	call	calc_hash
+	ld	bc,(base_hash)		;保存していた値と新たに取得した値を比較
+	ex	de,hl
+	or	a
+	sbc	hl,bc
+	ex	de,hl
+	jr	nz,non_ascii8k		;不一致＝切り替わりありで非8Kバンク
+					;(値の偶然の一致を避けるため#0対#2,#0対#255の2度比較)
 
 	call	srch_asc_backup		;バックアップRAM判定
 	ld	a,MAP_ASC8		;ASCII 8K
@@ -942,77 +995,96 @@ cnf_ascii:
 non_ascii8k:
 
 ;はぁりぃふぉっくす雪の魔王編判定
-;6800h-6FFFhへの書き込みで4000h-5FFFhが切り替わった
+;6800h-6FFFhへの書き込みで4000h-5FFFh(正確には前述の範囲を含む4000h-7FFFh)が切り替わる
 ;======
 
-	ld	de,6840h		;D=68h,E=40h
-
 	ld	hl,6800h		;6800hに0書き込み
-	ld	(hl),l
-	ld	h,e			;4000h読み出し
-	ld	a,(hl)
-	ld	h,d			;6800hに1書き込み
-	ld	(hl),1
-	ld	h,e			;読み出していた値と4000hを比較
-	cp	(hl)
+	ld	(hl),l			;(L=0)
+	ld	h,40h			;4000h-5FFFhのハッシュ値を取得
+	call	calc_hash
+	ld	(base_hash),de		;ハッシュ値を保存
+	ld	h,68h			;6800hに2書き込み
+	ld	(hl),2
+	ld	h,40h			;4000h-5FFFhのハッシュ値を取得
+	call	calc_hash
+	ld	bc,(base_hash)		;保存していた値と新たに取得した値を比較
+	ex	de,hl
+	or	a
+	sbc	hl,bc
+	ex	de,hl
 	jr	nz,cnf_harryfox		;不一致＝切り替わりありではぁりぃふぉっくす
-	ld	h,d			;6800hにFFh書き込み
+	ld	h,68h			;6800hにFFh書き込み
 	ld	(hl),0FFh
-	ld	h,e			;読み出していた値と4000hを比較
-	cp	(hl)
-	jr	z,cnf_ascii16k		;一致＝切り替わりなしでASCII 16K
+	ld	h,40h			;4000h-5FFFhのハッシュ値を取得
+	call	calc_hash
+	ld	bc,(base_hash)		;保存していた値と新たに取得した値を比較
+	ex	de,hl
+	or	a
+	sbc	hl,bc
+	ex	de,hl
+	jr	nz,cnf_harryfox		;不一致＝切り替わりありではぁりぃふぉっくす
 					;(値の偶然の一致を避けるため#0対#1,#0対#255の2度比較)
-cnf_harryfox:
-	ld	a,MAP_HFY		;はぁりぃふぉっくす雪の魔王編
-	ld	bc,0			;バックアップRAMなし
-	ret
-
-cnf_ascii16k:
+;cnf_ascii16k:
 	call	srch_asc_backup		;バックアップRAM判定
 	ld	a,MAP_ASC16		;ASCII 16K(含R-TYPE/HRA-MEGA)
 	add	a,e			;似非RAMフラグ(MAP_ASC8とMAP_ESE8の差)を加算
+	ret
+
+cnf_harryfox:
+	ld	a,MAP_HFY		;はぁりぃふぉっくす雪の魔王編
+	ld	bc,0			;バックアップRAMなし
 	ret
 
 non_ascii:
 
 ;スーパーロードランナー判定
 ;0000h-3FFFhへの書き込みで8000h-BFFFhが切り替わった
+;(openMSXでは0000hでないと反応しない)
 ;======
 
-	ld	de,0082h		;D=00h,E=82h
-
 	ld	hl,0000h		;0000hに0書き込み
-	ld	(hl),l
-	ld	h,e			;8200h読み出し(8000hだと切替後も同一値になってしまうため8200h)
-	ld	a,(hl)
-	ld	h,d			;0000hに1書き込み
-	ld	(hl),1
-	ld	h,e			;読み出していた値と8200hを比較
-	cp	(hl)
-	ld	h,d			;0000hのJP命令を書き戻す
-	ld	(hl),0C3h
+	ld	(hl),l			;(L=0)
+	ld	h,80h			;8000h-9FFFhのハッシュ値を取得
+	call	calc_hash
+	ld	(base_hash),de		;ハッシュ値を保存
+	ld	h,00h			;0000hに2書き込み
+	ld	(hl),2
+	ld	h,80h			;8000h-9FFFhのハッシュ値を取得
+	call	calc_hash
+	ld	bc,(base_hash)		;保存していた値と新たに取得した値を比較
+	ex	de,hl
+	or	a
+	sbc	hl,bc
+	ex	de,hl
 	jr	nz,cnf_sploderunner	;不一致＝切り替わりありでスーパーロードランナー
-	ld	h,d			;0000hにFFh書き込み
+	ld	h,00h			;0000hにFFh書き込み
 	ld	(hl),0FFh
-	ld	h,e			;読み出していた値と8200hを比較
-	cp	(hl)
-	ld	h,d			;0000hのJP命令を書き戻す
-	ld	(hl),0C3h
+	ld	h,80h			;8000h-9FFFhのハッシュ値を取得
+	call	calc_hash
+	ld	bc,(base_hash)		;保存していた値と新たに取得した値を比較
+	ex	de,hl
+	or	a
+	sbc	hl,bc
+	ex	de,hl
 	jr	z,non_sploderunner	;一致＝切り替わりなしで非スーパーロードランナー
 
 cnf_sploderunner:
+	ld	h,00h			;0000hのJP命令を書き戻す
+	ld	(hl),0C3h
+
 	ld	a,MAP_SLR		;スーパーロードランナー
 	ld	bc,0			;バックアップRAMなし
 	ret
 
 non_sploderunner:
+	ld	h,00h			;0000hのJP命令を書き戻す
+	ld	(hl),0C3h
 
 ;PAC/FMPAC判定
 ;5FFEh-5FFFhに0,0を書き込みで4000h-5FFDhがRAMでない
 ;and 5FFEh-5FFFhに4Dh,69h書き込みで4000h-5FFDhがRAMになった
 ;(さらにこの後7FF7hでROMバンクが切り替わることをチェックすればFMPAC確定できる)
 ;======
-
 
 	ld	hl,0			;5FFEh-5FFFHhに0,0書き込み
 	ld	(5FFEh),hl		;(L=0)
@@ -1031,24 +1103,24 @@ non_sploderunner:
 
 	ld	bc,1*256+0		;B=バックアップRAMセグメント数(1),C=RAM開始セグメント#(0)
 
-;存在しない容量増加版PAC判定(笑)
+;存在しない容量増加版PAC判定(笑) 誰か作りませんか？
 ;6000h-BFFFhの24KBにバックアップRAMがあるかチェックする
 ;======
 
 	;6000hの書き換え可否確認
-	ld	h,60h			;6000h読み出し
+	ld	h,60h			;6000h書き換え可否判定
 	writable_check
 	jr	nz,cnf_pac		;書き換え不可は非バックアップRAM
 	inc	b			;B=バックアップRAMセグメント数(+1)
 
 	;8000hの書き換え可否確認
-	ld	h,80h			;8000h読み出し
+	ld	h,80h			;8000h書き換え可否判定
 	writable_check
 	jr	nz,cnf_pac		;書き換え不可は非バックアップRAM
 	inc	b			;B=バックアップRAMセグメント数(+1)
 
 	;A000hの書き換え可否確認
-	ld	h,0A0h			;A000h読み出し
+	ld	h,0A0h			;A000h書き換え可否判定
 	writable_check
 	jr	nz,cnf_pac		;書き換え不可は非バックアップRAM
 	inc	b			;B=バックアップRAMセグメント数(+1)
@@ -1164,14 +1236,14 @@ cnf_ram_count:
 	ld	b,h
 	ld	a,l
 	or	a
-	jr	nz,ramcnt_notovfllow	;B!=0ならセグメント255を超えていない
-	inc	h			;HL=256
-ramcnt_notovfllow:
-	xor	a
+	jr	nz,non_overflow		;L≠0ならセグメント255を超えていない
+	inc	h			;255を超えているのでHL=256とする
+non_overflow:
+	xor	a			;バックアップRAMセグメント隠蔽
 	ld	(7000h),a
-	or	a
-	sbc	hl,bc
-	ld	b,l
+	or	a			;終了セグメント+1から開始セグメントを減算
+	sbc	hl,bc			;(結果は必ず8bitに収まる)
+	ld	b,l			;結果＝バックアップRAMセグメント数をBレジスタに設定
 
 ;似非RAM判定
 ;セグメント#0と#128の内容が同一でセグメント#128の書き換えがセグメント#0に反映される
@@ -1202,6 +1274,38 @@ ramcnt_notovfllow:
 non_eseram:
 	ld	e,0			;E=似非RAMフラグ(0でNOT似非RAM)
 	ret
+
+;比較用ハッシュ値計算
+;ent:
+;	HL=対象メモリアドレス(下位8bitは基本的に0で使用する)
+;ret:
+;	DE=ハッシュ値
+;brk:
+;	af,bc,de
+;======
+calc_hash:
+	ld	de,0
+	ld	b,16
+	ld	c,h
+calc_hash_loop:
+	ld	a,(hl)
+	xor	h
+	xor	d
+	rlca
+	ld	d,a
+	inc	h
+	ld	a, (hl)
+	xor	h
+	xor	e
+	rlca
+	ld	e,a
+	inc	h
+	djnz	calc_hash_loop
+	ld	h,c
+	ret
+
+base_hash:
+	dw	0
 
 	.dephase
 identify_code_tail:
