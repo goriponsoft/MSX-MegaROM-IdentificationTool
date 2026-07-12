@@ -12,7 +12,7 @@ subgraph SCC["KONAMI with SCC判定"]
 end
 SCC_CHK1 -- No --> CRS_STA;
 SCC_CHK2 -- No --> CRS_STA;
-click SCC_FIN href "flow_scc.md" "SOUNDカートリッジ判別へ"
+click SCC_FIN "https://github.com/goriponsoft/MSX-MegaROM-IdentificationTool/blob/main/flow_scc.md" "SOUNDカートリッジ判別へ"
 subgraph CRS["クロスブレイム判定"]
 	CRS_STA("判定開始");
 	CRS_STA --> CRS_CHK1;
@@ -38,7 +38,7 @@ subgraph KNM["KONAMI without SCC判定"]
 	KNM_CHK1 -- Yes --> KNM_FIN("KONAMI without SCC確定<br>新10倍カートリッジ判別へ");
 end
 KNM_CHK1 -- No --> ASC_STA;
-click KNM_FIN href "flow_knm.md" "新10倍カートリッジ判別へ"
+click KNM_FIN "https://github.com/goriponsoft/MSX-MegaROM-IdentificationTool/blob/main/flow_knm.md" "新10倍カートリッジ判別へ"
 subgraph ASC["ASCII判定"]
 	ASC_STA("判定開始");
 	ASC_STA --> ASC_CHK1;
@@ -46,7 +46,7 @@ subgraph ASC["ASCII判定"]
 	ASC_CHK1 -- Yes --> ASC_FIN("ASCIIバンクサイズ判別へ<br>(含はありぃふぉっくす雪の魔王編)");
 end
 ASC_CHK1 -- No --> SLR_STA;
-click ASC_FIN href "flow_asc.md" "ASCIIバンクサイズ判別へ"
+click ASC_FIN "https://github.com/goriponsoft/MSX-MegaROM-IdentificationTool/blob/main/flow_asc.md" "ASCIIバンクサイズ判別へ"
 subgraph SLR["スーパーロードランナー判定"]
 	SLR_STA("判定開始");
 	SLR_STA --> SLR_CHK1;
@@ -64,6 +64,6 @@ subgraph PAC["PAC判定(含むFMPAC)"]
 end
 PAC_CHK1 -- No --> NML_FIN;
 PAC_CHK2 -- No --> NML_FIN;
-click PAC_FIN href "flow_pac.md" "PACバックアップRAM容量判定へ"
+click PAC_FIN "https://github.com/goriponsoft/MSX-MegaROM-IdentificationTool/blob/main/flow_pac.md" "PACバックアップRAM容量判定へ"
 NML_FIN("非メガROM確定");
 ```
